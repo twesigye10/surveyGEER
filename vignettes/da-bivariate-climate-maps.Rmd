@@ -1,0 +1,385 @@
+---
+title: "da-bivariate-climate-maps"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{da-bivariate-climate-maps}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Inputs
+
+toggle parameters
+```{r}
+write_rainfall_abundance_outputs <- c(T,F)[1]
+write_rainfall_timing_outputs <-  c(T,F)[1]
+write_combined_outputs <- c(T,F)[1]
+
+```
+
+```{r setup}
+library(surveyGEER)
+library(rgee)
+library(tidyverse)
+library(sf)
+library(tidyrgee)
+devtools::load_all()
+ee_Initialize()
+chirps_link <- "UCSB-CHG/CHIRPS/DAILY"
+chirps <- ee$ImageCollection(chirps_link)
+chirps_tidy <- as_tidyee(chirps)
+
+rgee::ee_get_date_ic(chirps,time_end = T)
+test_yrmo <- chirps_tidy |> 
+  group_by(year,month) |> 
+  summarise(stat="sum") |> 
+  as_ee()
+rgee::ee_get_date_ic(test_mo,time_end = T)
+test_mo <- chirps_tidy |> 
+  group_by(month) |> 
+  summarise(stat="sum") |> 
+  as_ee()
+rgee::ee_get_date_ic(test_yrmo,time_end = T)
+
+
+test$getInfo()
+min(lubridate::year(chirps_tidy$vrt$time_start))
+tidyrgee:::ee_month_composite.tidyee
+
+eedate_to_rdate(test$aggregate_array("system:time_start"))
+eedate_to_rdate(test$first()$get("system:time_start"))
+eedate_to_rdate(test$get("system:time_start"))
+
+rgee::ee_get_date_img(test$first(),time_end = T)
+?eedate_to_rdate
+
+test$aggregate_array("system:time_start")$getInfo()
+test$aggregate_array("system:time_end")$getInfo()
+
+con <- DBI::dbConnect(RPostgres::Postgres(),
+                      dbname = "global_gdb",
+                      user      = rstudioapi::askForPassword("Database user"),
+                      password      = rstudioapi::askForPassword("Database password"),
+                      port     = 5432)
+
+# DBI::dbListTables(con)
+admin1 <- st_read(con,"eth_adm1")
+admin1 <- admin1 |> 
+  rename(
+    geometry="geom"
+  )
+
+
+
+
+
+
+country_code <- "eth"
+AOI_layer_name <- "eth_adm0"
+AOI_grid_layer_name <- NULL
+hex_diameter <- 15000 # 15 km set as de
+surveyGEER:::aoi_or_grid_warning()
+
+```
+
+
+
+
+
+
+
+Create grid
+```{r}
+
+grid <- load_aoi_grid(aoi =AOI_layer_name,
+                           grid = AOI_grid_layer_name,
+                           hex_diameter = hex_diameter,
+                           country_code = country_code
+                           )
+
+```
+# CHIRPS monthly standard score
+## ImageCollection maninpulation
+
+- calculate time frame of interest precip values
+- calculate baseline time frame comparable precip values
+- join on common term
+
+
+```{r}
+rainfall_current <-  chirps_tidy |> 
+  filter(year==2022) |> 
+  group_by(year,month) |> 
+  summarise(
+    stat="sum"
+  )
+
+rainfall_yrmo_historical <-  chirps_tidy |> 
+  filter(year %in% 1981:2020) |> 
+  group_by(year,month) |> 
+  summarise(
+    stat="sum"
+  ) 
+rainfall_mo_historical <- rainfall_yrmo_historical |> 
+  group_by(month) |> 
+  summarise(stat=list("mean","sd"))
+
+
+rainfall_comparison_historical <- rainfall_current |> 
+  inner_join(rainfall_mo_historical, by="month")
+```
+
+from joined term we can calculate standard (Z) score. `$expression` methods have not yet been written into `tidyee` . Therefore we run conversion `as_ee` function to convert `tidyee` class back to `ImageCollection` class native to `rgee` to use `$expression` building syntax to create the standard score. After creation we can throw it back into our `tidyee` workflow with `as_ee`
+
+```{r}
+rainfall_comparison_historical_ic <- rainfall_comparison_historical |> 
+  as_ee()
+rainfall_comparison_historical_ic$first()$bandNames()$getInfo()
+
+rainfall_comparison_historical <- rainfall_comparison_historical |> 
+  select(precip_current="precipitation_sum",
+         precip_baseline_mean="precipitation_sum_mean",
+         precip_baseline_sd = "precipitation_sum_stdDev"
+         )
+rainfall_comparison_historical_ic <- rainfall_comparison_historical |> 
+  as_ee()
+rainfall_comparison_historical_ic$first()$bandNames()$getInfo()
+chirps_zscore_ic<- rainfall_comparison_historical_ic$map(
+  function(img){
+    zscore<- img$expression(
+      "float((precip_current-precip_baseline_mean)/(precip_baseline_sd))",
+      opt_map= list(precip_current= img$select("precip_current"),
+                    precip_baseline_mean= img$select("precip_baseline_mean"),
+                    precip_baseline_sd= img$select("precip_baseline_sd")
+      )
+    )$rename("precip_z_score")
+    img$select("precip_current","precip_baseline_mean")$addBands(zscore)
+  }
+  
+) 
+
+
+chirps_z_tidy <- as_tidyee(chirps_zscore_ic)
+```
+
+## Zonal Stats
+Now time for the zonal 
+
+```{r}
+
+rainfall_abundance_zonal <- chirps_z_tidy |> 
+  ee_extract_tidy(
+    y = grid,stat = "mean",scale = 5500,via = "drive"
+                  )
+
+if(write_chirps_outputs){
+  write_rds(rainfall_abundance_zonal,"data/temp_outputs/precip_abundance_z_grid.rds")
+}
+
+```
+
+
+
+[USAID and GOE document](http://foodeconomy.com/wp-content/uploads/2016/02/Atlas-Final-Web-Version-6_14.pdf) defines start of rain season as "first 10 day period (dekad) that has more than 15 mm of rain"
+
+Therefore we should do a 10 day rolling some on daily chirps data and then we can find the 15 mm threshold and day of year  (DOY) it was crossed.
+
+luckily we have some helpful functions that were produced in `easyrgee`. Some discussions on where these function should live...so ill just copy into `surveyGEER` directory for now
+
+
+rolling stat funciton modified from unosat methodology... it puts time_start as date when the roll starts. Since time_start has more inherernt props i think it would make more sense for this to be the date the roll ends. We can modify this later, but let's just assume this is correct for now and see if we can apply the theshold to make DOY raster
+
+```{r}
+rainfall_daily_2022 <- chirps_tidy |> 
+  filter(year ==2022)
+
+# debugonce(ee_rolling_statistic)
+rainfall_10_day_rolling_sum <- ee_rolling_statistic(x = rainfall_daily_2022,stat = "sum",window = 10,time_unit = "day")
+
+# lets see how it works with dates mod
+rainfall_10_day_rolling_sum2 <- ee_rolling_statistic2(x = rainfall_daily_2022,stat = "sum",window = 10,time_unit = "day")
+
+
+
+# rgee::ee_get_date_ic(rainfall_10_day_rolling_sum$ee_ob)
+rgee::ee_get_date_ic(rainfall_10_day_rolling_sum2$ee_ob)
+```
+
+```{r}
+
+adm1_bbox_ee <- st_bbox(admin1) |> 
+  st_as_sfc() |> 
+  rgee::sf_as_ee()
+
+doy_raster <- ee_accum_reduce_to_doy(
+  ic = rainfall_10_day_rolling_sum$ee_ob$filterBounds(adm1_bbox_ee),
+  thresh = 15,
+  band = "precipitation_sum")
+doy_raster2 <- ee_accum_reduce_to_doy(
+  ic = rainfall_10_day_rolling_sum2$ee_ob$filterBounds(adm1_bbox_ee),
+  thresh = 15,
+  band = "precipitation_sum")
+
+
+
+Map$centerObject(eeObject = adm1_bbox_ee,zoom = 6)
+Map$addLayer(doy_raster,
+              visParams = list(min=0,
+                               max=365,
+                               palette=c('#9ecae1,
+                                         #ffffff,
+                                         #ffeda0,
+                                         # feb24c,
+                                         #f03b20'))
+              )
+
+Map$addLayer(doy_raster2,
+              visParams = list(min=0,
+                               max=140,
+                               palette=c('#9ecae1,
+                                         #ffffff,
+                                         #ffeda0,
+                                         #feb24c,
+                                         #f03b20'))
+              )
+
+```
+
+```{r}
+
+ee_get_date_img(doy_raster)
+doy_raster2_tidyee <- as_tidyee(doy_raster2)
+
+system.time(ten_day_rolling_zonal_adm1 <- rainfall_10_day_rolling_sum2 |> 
+  ee_extract_tidy(admin1,stat = "median",scale = 5500,via = "drive")
+)
+ten_day_rolling_zonal_adm1 |> glimpse()
+ten_day_rolling_zonal_adm1 |> 
+  select(adm1_en,date, value, parameter) |> 
+  arrange(adm1_en, date) |> 
+  ggplot(aes(x=date, y=value))+
+  geom_line()+
+  facet_wrap(~adm1_en)
+
+# rgee::ee_extract(x = doy_raster2,y = admin1,scale=5500)
+```
+
+
+
+```{r}
+rainfall_daily_2022
+lubridate::yday(rainfall_daily_2022$vrt$date)
+loop_rolling_by_doy <- function(x,doy_range){
+  # ee_years_list <- 
+  ee_years_list$map(
+    rgee::ee_utils_pyfunc(
+      function(y){
+        yoi<- x$filterCalendar(x,y)
+        toi <- x$filterCalendar(yoi, doy_range)
+        yearly_rolling_ic <- ee_rolling_statistic2(toi)
+        yearly_sos_doy_raster <- ee_accum_reduce_to_doy(ic = yearly_rolling_ic,thresh = 15,band = "precipitation_sum")
+        # -> imageCollection for yearly doys
+      }
+    )
+  )
+  
+  
+}
+# from yearly_doy_ic <- we can compute overall mean
+
+```
+
+Saw a nice NYT Infographic in this [article](https://www.nytimes.com/interactive/2022/06/01/climate/new-mexico-wildfires.html). I think we can recreate it with chirps data.
+
+```{r}
+chirps_monthly_2022 <- chirps_tidy |> 
+  filter(year==2022)|>
+  group_by(year,month) |> 
+  summarise(
+    stat="sum"
+  ) 
+chirps_monthly_lte_2021 <- chirps_tidy |> 
+  filter(year<2022) |> 
+  group_by(year,month) |> 
+  summarise(
+    stat="sum"
+  )
+
+chirps_12mo_historical <- chirps_monthly_lte_2021 |> 
+  group_by(month) |> 
+  summarise(stat=list("min","max"))
+
+chirps_comparison <- chirps_monthly_2022 |> 
+  inner_join(chirps_12mo_historical , by="month")
+chirps_comparison_ic <- chirps_comparison |> 
+  as_ee()
+chirps_comparison_ic$first()$bandNames()$getInfo()
+
+chirps_comparison_index<- chirps_comparison_ic$map(
+  function(img){
+    chirps_index<- img$expression(
+      "float((precip_current-precip_min)/(precip_max-precip_min))",
+      opt_map= list(precip_current= img$select("precipitation_sum"),
+                    precip_min= img$select("precipitation_sum_min"),
+                    precip_max= img$select("precipitation_sum_max")
+      )
+    )$rename("chirps_index")
+    img$select("precipitation_sum")$addBands(chirps_index)
+  }
+  
+) 
+# chirps_comparison_index |> ee_get_date_ic()
+chirps_comparison_tidy <- chirps_comparison_index |> as_tidyee()
+debugonce(filter)
+chirps_comparison_april <- chirps_comparison_tidy |> 
+  filter(month==4) |> 
+  as_ee()
+chirps_comparison_april_img <- ee$Image(chirps_comparison_april$first())
+
+
+
+Map$centerObject(eeObject = adm1_bbox_ee,zoom = 6)
+Map$addLayer(chirps_comparison_april_img$select("chirps_index"),
+                         visParams = list(min=0,
+                               max=1,
+                               palette=c('#9ecae1,
+                                         #ffffff,
+                                         #ffeda0,
+                                         #feb24c,
+                                         #f03b20'))
+              )
+
+chirps_april_clipped <- chirps_comparison_april_img$select("chirps_index")$clip(adm1_bbox_ee)
+# took about 15 s before counting started....
+system.time(
+chirps_april_clipped_raster <- ee_as_raster(image = chirps_april_clipped,scale = 5500)
+)
+
+terra::rast(chirps_april_clipped_raster)
+terra::flip(chirps_april_clipped_raster, direction='y') |> 
+    terra::writeRaster("chirps_index_flip_april22.tiff")
+terra::rast(chirps_april_clipped_raster) |> 
+    terra::writeRaster("chirps_index_flip_april22_5500m_2.tiff")
+# chirps_april_clipped_raster |> 
+#   terra::writeRaster("chirps_index_april22.tiff")
+# alright what is going on... would be nice if we could use an inspector tool here
+# instead lets sample
+
+sample_fc <- admin1 |> 
+  st_sample(size = 100) |> 
+  sf_as_ee()
+
+sample_vals <- chirps_comparison_april_img |> 
+  ee_extract_tidy(y = sample_fc, via="drive",scale = 5500)
+
+sample_vals |> 
+  ggplot(aes(x=chirps_index,y=precipitation_sum))+
+  geom_point()
+```

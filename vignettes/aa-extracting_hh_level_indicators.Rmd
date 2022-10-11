@@ -279,7 +279,7 @@ ee_floored_date_list_to_map <- function(x,month_lag){
 }
   
 
-ee_floored_date_list_to_map(x = chirps_tidy,month_lag = 2)$getInfo()
+ee_floored_date_list_to_map(x = chirps_tidy,month_lag = 3)$getInfo()
 debugonce(ee_lag_stat)
 ee_lag_stat(x = chirps_tidy,month_lag = 1)$getInfo()
 
@@ -338,6 +338,11 @@ calc_mean_sd_baseline <- function(ic){
   return(mean_sd_stats)
 }
   
+
+chirps_ic <- chirps_tidy$ee_ob
+test_do_cr_filt <- chirps_ic$filter(ee$Filter$calendarRange(350, 3, 'day_of_year'))
+test_do_cr_filt_tidyee <- test_do_cr_filt |> as_tidyee()
+test_do_cr_filt_tidyee
 
 
 ee_spi <-  function(x, month_lag){
