@@ -23,9 +23,7 @@ vignettes/workflow.Rmd
 *.xlsx
 data/sample_hh_data.xlsx
 data/metadata.R
-<<<<<<< HEAD
-reach_filled_templates/*
-=======
+
 ^data/eth
 data/*
 map_templates/map_outputs/*
@@ -33,4 +31,4 @@ R/decouple_coordinates.R
 local_jobs/*
 workflow_tutorial_files/*
 col_target_rs_report_files/*
->>>>>>> 106d9a5213f189890653eb1f0bcc812cb7f94a6d
+
