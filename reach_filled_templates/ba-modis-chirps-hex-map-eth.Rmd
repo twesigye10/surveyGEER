@@ -67,7 +67,7 @@ extract_precip_to_hex <- c(T,F)[1]
 country_code <- "eth"
 AOI_layer_name <- "eth_adm0"
 AOI_grid_layer_name <- NULL
-hex_diameter <- 15000 # 15 km set as default diameter for hexagon
+hex_diameter <- 12000 # 12 km set as default diameter for hexagon
 
 surveyGEER:::aoi_or_grid_warning()
 
