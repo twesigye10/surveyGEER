@@ -198,10 +198,10 @@ ndvi_recent_baseline_imageCol <- ndvi_recent_and_baseline |>
 ndvi_zscore<- ndvi_recent_baseline_imageCol$map(
   function(img){
     zscore<- img$expression(
-      "float((NDVI-NDVI_mean)/(NDVI_stdDev))",
+      "float((NDVI-NDVI_mean)/(NDVI_sd))",
       opt_map= list(NDVI= img$select("NDVI"),
                     NDVI_mean= img$select("NDVI_mean"),
-                    NDVI_stdDev= img$select("NDVI_stdDev")
+                    NDVI_sd= img$select("NDVI_sd")
       )
     )$rename("NDVI_z_score")
     img$select("NDVI","NDVI_mean")$addBands(zscore)
@@ -261,7 +261,8 @@ if(!is.null(write_outputs_to)){
                                hex_diameter,
                                "_ndvi.shp")
   grid_w_ndvi_spatial |> 
-    sf::st_write(hex_file_path_name)
+    mutate(yr_mo = paste0(lubridate::month(date,label=T,abbr = F)," ",lubridate::year(date))) |> 
+    sf::st_write(hex_file_path_name, append=FALSE)
   
 }
 
@@ -313,11 +314,11 @@ yearly_rainfall_hex_1981_2021<- yearly_rainfall_hex |>
     record_high= value==max(value)
   ) 
 
-record_lows_2021 <- yearly_rainfall_hex |> 
+record_lows_2021 <- yearly_rainfall_hex_1981_2021 |> 
   filter(record_low) |> 
   filter(date=="2021-01-01")
 
-record_highs_2021 <- yearly_rainfall_hex |> 
+record_highs_2021 <- yearly_rainfall_hex_1981_2021 |> 
   filter(record_high) |> 
   filter(date=="2021-01-01")
 
@@ -358,7 +359,11 @@ record_low_centroids<- grid |>
 
 
 if(!is.null(write_outputs_to)){
-  sf::st_write(obj = record_low_centroid,dsn = record_low_centroids,layer = "precip_record_low.shp")
+  precip_file_path_name <- paste0(write_outputs_to,
+                               "reach_",
+                               country_code,
+                               "_precip_record_low.shp")
+  sf::st_write(obj = record_low_centroids, dsn = precip_file_path_name, append = FALSE)
 }
 ```
 
@@ -386,3 +391,34 @@ knitr::include_graphics("man/figures/qgis_layers_panel.png")
 knitr::include_graphics("man/figures/qgis_layers_panel.png")
 
 ```
+
+
+```{r}
+# choose a shapefile/layer for admin boundaries
+df_choose_shapefile <- choose.files(multi = FALSE, 
+                                    caption = "Choose layer to support atlas", 
+                                    filters = matrix(c("Shape files (*.shp)", "*.shp", "Geopackage files (*.gpkg)", "*.gpkg"),
+                                                     nrow = 2, ncol = 2, byrow = TRUE), 
+                                    index = 1) 
+
+eth_adm0_dissolved <- st_read(df_choose_shapefile) |> 
+  summarise() |> 
+  mutate(uid=1)
+
+atlas_victim <- eth_adm0_dissolved |> 
+  left_join(
+  grid_with_ndvi |> 
+  mutate(yr_mo = paste0(lubridate::month(date,label=T,abbr = F)," ",lubridate::year(date))) |> 
+  distinct(date, yr_mo) |> 
+  mutate(uid=1)   
+  ) 
+
+atlas_victim |> print(n=17)
+
+atlas_victim|> 
+  st_write(
+    paste0(write_outputs_to, "reach_", country_code, "_atlas_coverage.gpkg"), 
+    overwrite=T
+  )
+```
+
