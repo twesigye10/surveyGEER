@@ -22,6 +22,7 @@ epsg_lookup <- function(){
     "drc",32633L,"WGS 84 / UTM zone 33N",
     "car",2633L,"WGS 84 / UTM zone 33N",
     "ssd",32636L,"WGS 84 / UTM zone 36N",
+    "uga",32636L,"WGS 84 / UTM zone 36N",
     "nga",32632L,"WGS 84 / UTM zone 32N",
     "ukr",32636L,"WGS 84 / UTM zone 36N",
     "mli",32629L,"WGS 84/UTM zone 29N",
