@@ -82,7 +82,7 @@ surveyGEER:::aoi_or_grid_warning()
 # ee_Initialize()
 
 
-modis_link <- "MODIS/006/MOD13Q1"
+modis_link <- "MODIS/061/MOD13Q1"
 modisIC <- ee$ImageCollection(modis_link)
 
 
@@ -262,7 +262,7 @@ if(!is.null(write_outputs_to)){
                                "_ndvi.shp")
   grid_w_ndvi_spatial |> 
     mutate(yr_mo = paste0(lubridate::month(date,label=T,abbr = F)," ",lubridate::year(date))) |> 
-    sf::st_write(hex_file_path_name, append=FALSE)
+    sf::st_write(hex_file_path_name, append=FALSE, overwrite=T)
   
 }
 
@@ -418,6 +418,7 @@ atlas_victim |> print(n=17)
 atlas_victim|> 
   st_write(
     paste0(write_outputs_to, "reach_", country_code, "_atlas_coverage.gpkg"), 
+    append = FALSE, 
     overwrite=T
   )
 ```
